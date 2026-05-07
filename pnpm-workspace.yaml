@@ -1,6 +1,8 @@
 packages:
   - mcp-server
 
+allowUnusedPatches: true
+
 ignoredBuiltDependencies:
   - esbuild
 
