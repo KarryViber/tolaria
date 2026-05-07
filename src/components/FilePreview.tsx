@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
-import { ArrowSquareOut, ClipboardText, FileDashed, FileDoc, FilePdf, FilePpt, FileXls, FlowArrow, FolderOpen, ImageSquare, SpeakerHigh, Video, WarningCircle } from '@phosphor-icons/react'
+import { ArrowSquareOut, ClipboardText, FileDashed, FileDoc, FilePdf, FileXls, FolderOpen, ImageSquare, SpeakerHigh, Video, WarningCircle } from '@phosphor-icons/react'
 import DOMPurify from 'dompurify'
 import type { VaultEntry } from '../types'
 import { trackFilePreviewAction, trackFilePreviewFailed, trackFilePreviewOpened } from '../lib/productAnalytics'
@@ -105,11 +105,11 @@ function FilePreviewHeaderIcon({ previewKind }: { previewKind: FilePreviewKind |
   }
 
   if (previewKind === 'pptx') {
-    return <FilePpt size={17} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+    return <FilePdf size={17} className="shrink-0 text-muted-foreground" aria-hidden="true" />
   }
 
   if (previewKind === 'drawio') {
-    return <FlowArrow size={17} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+    return <ImageSquare size={17} className="shrink-0 text-muted-foreground" aria-hidden="true" />
   }
 
   return <FileDashed size={17} className="shrink-0 text-muted-foreground" aria-hidden="true" />
