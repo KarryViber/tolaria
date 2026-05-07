@@ -375,6 +375,10 @@ function FilePreviewDocx({
         className="mx-auto my-6 max-w-[920px] [&_.docx-wrapper]:bg-transparent [&_.docx-wrapper>section.docx]:mx-auto [&_.docx-wrapper>section.docx]:my-4 [&_.docx-wrapper>section.docx]:bg-background [&_.docx-wrapper>section.docx]:shadow-sm"
         data-testid="docx-file-preview"
         aria-label={`${entry.title} document content`}
+        style={{
+          fontFamily:
+            '-apple-system, BlinkMacSystemFont, "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", "MS Mincho", "Hiragino Kaku Gothic ProN", "Yu Gothic", "YuGothic", "Meiryo", "PingFang SC", "Microsoft YaHei", "Source Han Serif", "Source Han Sans", serif',
+        }}
       />
     </div>
   )
