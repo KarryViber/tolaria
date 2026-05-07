@@ -1,6 +1,6 @@
 import type { VaultEntry } from '../types'
 
-export type FilePreviewKind = 'image' | 'pdf' | 'audio' | 'video' | 'docx' | 'xlsx'
+export type FilePreviewKind = 'image' | 'pdf' | 'audio' | 'video' | 'docx' | 'xlsx' | 'pptx' | 'drawio'
 
 const IMAGE_PREVIEW_EXTENSIONS = new Set([
   'apng',
@@ -21,6 +21,8 @@ const AUDIO_PREVIEW_EXTENSIONS = new Set(['aac', 'flac', 'm4a', 'mp3', 'oga', 'o
 const VIDEO_PREVIEW_EXTENSIONS = new Set(['m4v', 'mov', 'mp4', 'ogv', 'webm'])
 const DOCX_PREVIEW_EXTENSIONS = new Set(['docx'])
 const XLSX_PREVIEW_EXTENSIONS = new Set(['xlsx', 'xlsm', 'xlsb', 'xls', 'csv'])
+const PPTX_PREVIEW_EXTENSIONS = new Set(['pptx', 'ppt', 'pptm'])
+const DRAWIO_PREVIEW_EXTENSIONS = new Set(['drawio', 'dio'])
 
 function extensionFromFilename(filename: string): string | null {
   const lastSegment = filename.split(/[\\/]/u).pop() ?? filename
@@ -52,6 +54,8 @@ export function filePreviewKind(entry: Pick<VaultEntry, 'fileKind' | 'filename' 
   if (VIDEO_PREVIEW_EXTENSIONS.has(extension)) return 'video'
   if (DOCX_PREVIEW_EXTENSIONS.has(extension)) return 'docx'
   if (XLSX_PREVIEW_EXTENSIONS.has(extension)) return 'xlsx'
+  if (PPTX_PREVIEW_EXTENSIONS.has(extension)) return 'pptx'
+  if (DRAWIO_PREVIEW_EXTENSIONS.has(extension)) return 'drawio'
   return null
 }
 

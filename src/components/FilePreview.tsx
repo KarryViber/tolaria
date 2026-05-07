@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { convertFileSrc } from '@tauri-apps/api/core'
-import { ArrowSquareOut, ClipboardText, FileDashed, FileDoc, FilePdf, FileXls, FolderOpen, ImageSquare, SpeakerHigh, Video, WarningCircle } from '@phosphor-icons/react'
+import { convertFileSrc, invoke } from '@tauri-apps/api/core'
+import { ArrowSquareOut, ClipboardText, FileDashed, FileDoc, FilePdf, FilePpt, FileXls, FlowArrow, FolderOpen, ImageSquare, SpeakerHigh, Video, WarningCircle } from '@phosphor-icons/react'
 import DOMPurify from 'dompurify'
 import type { VaultEntry } from '../types'
 import { trackFilePreviewAction, trackFilePreviewFailed, trackFilePreviewOpened } from '../lib/productAnalytics'
@@ -56,6 +56,22 @@ function fallbackContentForPreviewKind(previewKind: FilePreviewKind | null): Omi
     }
   }
 
+  if (previewKind === 'pptx') {
+    return {
+      icon: 'warning',
+      title: 'Presentation preview failed',
+      description: 'Tolaria could not render this presentation. Make sure LibreOffice is installed (`brew install --cask libreoffice`).',
+    }
+  }
+
+  if (previewKind === 'drawio') {
+    return {
+      icon: 'warning',
+      title: 'Diagram preview failed',
+      description: 'Tolaria could not render this draw.io diagram in the preview.',
+    }
+  }
+
   return {
     icon: 'file',
     title: 'Preview unavailable',
@@ -86,6 +102,14 @@ function FilePreviewHeaderIcon({ previewKind }: { previewKind: FilePreviewKind |
 
   if (previewKind === 'xlsx') {
     return <FileXls size={17} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+  }
+
+  if (previewKind === 'pptx') {
+    return <FilePpt size={17} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+  }
+
+  if (previewKind === 'drawio') {
+    return <FlowArrow size={17} className="shrink-0 text-muted-foreground" aria-hidden="true" />
   }
 
   return <FileDashed size={17} className="shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -474,6 +498,157 @@ function FilePreviewXlsx({
   )
 }
 
+function FilePreviewPptx({
+  entry,
+  filePath,
+  onError,
+  onOpenExternal,
+}: {
+  entry: VaultEntry
+  filePath: string
+  onError: () => void
+  onOpenExternal: () => void
+}) {
+  const [pdfSrc, setPdfSrc] = useState<string | null>(null)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setPdfSrc(null)
+    setErrorMessage(null)
+
+    void (async () => {
+      try {
+        const cachedPath = await invoke<string>('pptx_to_pdf', { path: filePath })
+        if (cancelled) return
+        setPdfSrc(convertFileSrc(cachedPath))
+      } catch (error) {
+        if (cancelled) return
+        const message = typeof error === 'string' ? error : error instanceof Error ? error.message : 'Unknown error'
+        console.warn('pptx preview failed', error)
+        setErrorMessage(message)
+        onError()
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [filePath, onError])
+
+  if (errorMessage) {
+    const fallback = fallbackContentForPreviewKind('pptx')
+    return (
+      <FilePreviewFallback
+        icon={fallback.icon}
+        title={fallback.title}
+        description={`${fallback.description}\n\n${errorMessage}`}
+        onOpenExternal={onOpenExternal}
+      />
+    )
+  }
+
+  if (pdfSrc === null) {
+    return <FilePreviewLoading label="Converting presentation via LibreOffice…" />
+  }
+
+  const fallback = fallbackContentForPreviewKind('pptx')
+
+  return (
+    <object
+      data={pdfSrc}
+      type="application/pdf"
+      title={entry.title}
+      className="h-full min-h-[320px] w-full bg-background"
+      data-testid="pptx-file-preview"
+    >
+      <FilePreviewFallback
+        icon={fallback.icon}
+        title={fallback.title}
+        description={fallback.description}
+        onOpenExternal={onOpenExternal}
+      />
+    </object>
+  )
+}
+
+function FilePreviewDrawio({
+  entry,
+  assetSrc,
+  onError,
+}: {
+  entry: VaultEntry
+  assetSrc: string
+  onError: () => void
+}) {
+  const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  const [xml, setXml] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setXml(null)
+
+    void (async () => {
+      try {
+        const response = await fetch(assetSrc)
+        if (!response.ok) throw new Error(`Failed to load diagram (status ${response.status})`)
+        const text = await response.text()
+        if (cancelled) return
+        setXml(text)
+      } catch (error) {
+        if (cancelled) return
+        console.warn('drawio fetch failed', error)
+        onError()
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [assetSrc, onError])
+
+  useEffect(() => {
+    if (!xml) return
+    const iframe = iframeRef.current
+    if (!iframe) return
+
+    const handler = (event: MessageEvent) => {
+      if (event.source !== iframe.contentWindow) return
+      let payload: { event?: string } | null = null
+      try {
+        payload = typeof event.data === 'string' ? JSON.parse(event.data) : null
+      } catch {
+        payload = null
+      }
+      if (!payload || payload.event !== 'init') return
+      iframe.contentWindow?.postMessage(
+        JSON.stringify({ action: 'load', xml, autosave: 0 }),
+        '*',
+      )
+    }
+
+    window.addEventListener('message', handler)
+    return () => {
+      window.removeEventListener('message', handler)
+    }
+  }, [xml])
+
+  if (xml === null) {
+    return <FilePreviewLoading label="Loading draw.io diagram…" />
+  }
+
+  return (
+    <iframe
+      ref={iframeRef}
+      title={`${entry.title} draw.io diagram`}
+      data-testid="drawio-file-preview"
+      className="h-full min-h-[400px] w-full border-0 bg-background"
+      src="https://viewer.diagrams.net/?embed=1&proto=json&saveAndExit=0&noSaveBtn=1&noExitBtn=1&chrome=0&toolbar=0"
+      sandbox="allow-scripts allow-same-origin"
+    />
+  )
+}
+
 function FilePreviewBody({
   entry,
   previewKind,
@@ -495,6 +670,8 @@ function FilePreviewBody({
   onVideoError: () => void
   onDocxError: () => void
   onXlsxError: () => void
+  onPptxError: () => void
+  onDrawioError: () => void
   onOpenExternal: () => void
 }) {
   if (shouldRenderImagePreview(previewKind === 'image', assetSrc, imageFailed)) {
@@ -519,6 +696,14 @@ function FilePreviewBody({
 
   if (previewKind === 'xlsx' && assetSrc !== null) {
     return <FilePreviewXlsx entry={entry} assetSrc={assetSrc} onError={onXlsxError} onOpenExternal={onOpenExternal} />
+  }
+
+  if (previewKind === 'pptx') {
+    return <FilePreviewPptx entry={entry} filePath={entry.path} onError={onPptxError} onOpenExternal={onOpenExternal} />
+  }
+
+  if (previewKind === 'drawio' && assetSrc !== null) {
+    return <FilePreviewDrawio entry={entry} assetSrc={assetSrc} onError={onDrawioError} />
   }
 
   const fallback = fallbackContentForPreviewKind(previewKind)
@@ -555,6 +740,12 @@ function useFilePreviewFailureState(entryPath: string) {
   const handleXlsxError = useCallback(() => {
     trackFilePreviewFailed('xlsx')
   }, [])
+  const handlePptxError = useCallback(() => {
+    trackFilePreviewFailed('pptx')
+  }, [])
+  const handleDrawioError = useCallback(() => {
+    trackFilePreviewFailed('drawio')
+  }, [])
 
   return {
     imageFailed: failedImagePath === entryPath,
@@ -564,6 +755,8 @@ function useFilePreviewFailureState(entryPath: string) {
     handleVideoError,
     handleDocxError,
     handleXlsxError,
+    handlePptxError,
+    handleDrawioError,
   }
 }
 
@@ -665,6 +858,8 @@ export function FilePreview({
           onVideoError={failures.handleVideoError}
           onDocxError={failures.handleDocxError}
           onXlsxError={failures.handleXlsxError}
+          onPptxError={failures.handlePptxError}
+          onDrawioError={failures.handleDrawioError}
           onOpenExternal={actions.handleOpenExternal}
         />
       </div>

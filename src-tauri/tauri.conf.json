@@ -41,7 +41,8 @@
         "style-src-attr": "'unsafe-inline'",
         "font-src": "'self' data: https://fonts.gstatic.com",
         "media-src": "'self' asset: http://asset.localhost data: blob: https:",
-        "object-src": "'self' asset: http://asset.localhost"
+        "object-src": "'self' asset: http://asset.localhost",
+        "frame-src": "'self' https://viewer.diagrams.net https://embed.diagrams.net"
       },
       "assetProtocol": {
         "enable": true,
