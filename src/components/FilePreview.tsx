@@ -309,27 +309,43 @@ function FilePreviewDocx({
   onError: () => void
   onOpenExternal: () => void
 }) {
-  const [rawHtml, setRawHtml] = useState<string | null>(null)
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const containerRef = useSanitizedHtmlFragment<HTMLElement>(rawHtml)
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const containerRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    setRawHtml(null)
-    setErrorMessage(null)
+    setStatus('loading')
+    const node = containerRef.current
+    if (node) {
+      while (node.firstChild) node.removeChild(node.firstChild)
+    }
 
     void (async () => {
       try {
         const buffer = await fetchArrayBuffer(assetSrc)
-        const mammothModule = await import('mammoth/mammoth.browser')
-        const mammoth = (mammothModule as typeof mammothModule & { default?: typeof mammothModule }).default ?? mammothModule
-        const result = await mammoth.convertToHtml({ arrayBuffer: buffer })
+        const docxPreview = await import('docx-preview')
+        if (cancelled || !containerRef.current) return
+        await docxPreview.renderAsync(buffer, containerRef.current, undefined, {
+          className: 'tolaria-docx',
+          inWrapper: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          ignoreFonts: false,
+          breakPages: true,
+          ignoreLastRenderedPageBreak: true,
+          trimXmlDeclaration: true,
+          useBase64URL: true,
+          renderHeaders: true,
+          renderFooters: true,
+          renderFootnotes: true,
+          renderEndnotes: true,
+        })
         if (cancelled) return
-        setRawHtml(result.value)
+        setStatus('ready')
       } catch (error) {
         if (cancelled) return
         console.warn('docx preview failed', error)
-        setErrorMessage(error instanceof Error ? error.message : 'Unknown error')
+        setStatus('error')
         onError()
       }
     })()
@@ -339,7 +355,7 @@ function FilePreviewDocx({
     }
   }, [assetSrc, onError])
 
-  if (errorMessage) {
+  if (status === 'error') {
     const fallback = fallbackContentForPreviewKind('docx')
     return (
       <FilePreviewFallback
@@ -351,17 +367,16 @@ function FilePreviewDocx({
     )
   }
 
-  if (rawHtml === null) {
-    return <FilePreviewLoading label="Rendering Word document…" />
-  }
-
   return (
-    <article
-      ref={containerRef}
-      className="docx-preview prose prose-sm max-w-none px-8 py-6 text-[14px] leading-7 dark:prose-invert [&_h1]:mb-3 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:text-lg [&_h3]:font-semibold [&_h4]:mb-1.5 [&_h4]:mt-3 [&_h4]:text-base [&_h4]:font-semibold [&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-0.5 [&_table]:my-4 [&_table]:w-full [&_table]:border-collapse [&_table]:text-[13px] [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:px-2 [&_th]:py-1 [&_th]:font-semibold [&_th]:text-left [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1 [&_td]:align-top [&_img]:my-3 [&_img]:max-w-full [&_strong]:font-semibold [&_em]:italic [&_a]:text-primary [&_a]:underline"
-      data-testid="docx-file-preview"
-      aria-label={`${entry.title} document content`}
-    />
+    <div className="relative h-full min-h-0 w-full overflow-auto bg-muted/30">
+      {status === 'loading' && <FilePreviewLoading label="Rendering Word document…" />}
+      <div
+        ref={containerRef}
+        className="mx-auto my-6 max-w-[920px] [&_.docx-wrapper]:bg-transparent [&_.docx-wrapper>section.docx]:mx-auto [&_.docx-wrapper>section.docx]:my-4 [&_.docx-wrapper>section.docx]:bg-background [&_.docx-wrapper>section.docx]:shadow-sm"
+        data-testid="docx-file-preview"
+        aria-label={`${entry.title} document content`}
+      />
+    </div>
   )
 }
 
