@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
-import { ArrowSquareOut, ClipboardText, FileDashed, FilePdf, FolderOpen, ImageSquare, SpeakerHigh, Video, WarningCircle } from '@phosphor-icons/react'
+import { ArrowSquareOut, ClipboardText, FileDashed, FileDoc, FilePdf, FileXls, FolderOpen, ImageSquare, SpeakerHigh, Video, WarningCircle } from '@phosphor-icons/react'
+import DOMPurify from 'dompurify'
 import type { VaultEntry } from '../types'
 import { trackFilePreviewAction, trackFilePreviewFailed, trackFilePreviewOpened } from '../lib/productAnalytics'
 import { filePreviewKind, previewFileTypeLabel, type FilePreviewKind } from '../utils/filePreview'
@@ -39,6 +40,22 @@ function fallbackContentForPreviewKind(previewKind: FilePreviewKind | null): Omi
     }
   }
 
+  if (previewKind === 'docx') {
+    return {
+      icon: 'warning',
+      title: 'Word preview failed',
+      description: 'Tolaria could not render this Word document in the preview.',
+    }
+  }
+
+  if (previewKind === 'xlsx') {
+    return {
+      icon: 'warning',
+      title: 'Spreadsheet preview failed',
+      description: 'Tolaria could not render this spreadsheet in the preview.',
+    }
+  }
+
   return {
     icon: 'file',
     title: 'Preview unavailable',
@@ -61,6 +78,14 @@ function FilePreviewHeaderIcon({ previewKind }: { previewKind: FilePreviewKind |
 
   if (previewKind === 'video') {
     return <Video size={17} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+  }
+
+  if (previewKind === 'docx') {
+    return <FileDoc size={17} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+  }
+
+  if (previewKind === 'xlsx') {
+    return <FileXls size={17} className="shrink-0 text-muted-foreground" aria-hidden="true" />
   }
 
   return <FileDashed size={17} className="shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -246,6 +271,190 @@ function shouldRenderImagePreview(isImage: boolean, imageSrc: string | null, ima
   return isImage && imageSrc !== null && !imageFailed
 }
 
+async function fetchArrayBuffer(src: string): Promise<ArrayBuffer> {
+  const response = await fetch(src)
+  if (!response.ok) throw new Error(`Failed to load file (status ${response.status})`)
+  return response.arrayBuffer()
+}
+
+function useSanitizedHtmlFragment<T extends HTMLElement>(rawHtml: string | null) {
+  const ref = useRef<T | null>(null)
+  useEffect(() => {
+    const node = ref.current
+    if (!node) return
+    while (node.firstChild) node.removeChild(node.firstChild)
+    if (!rawHtml) return
+    const fragment = DOMPurify.sanitize(rawHtml, { RETURN_DOM_FRAGMENT: true }) as unknown as DocumentFragment
+    node.appendChild(fragment)
+  }, [rawHtml])
+  return ref
+}
+
+function FilePreviewLoading({ label }: { label: string }) {
+  return (
+    <div className="flex h-full min-h-[260px] items-center justify-center px-8 text-center text-[13px] text-muted-foreground">
+      {label}
+    </div>
+  )
+}
+
+function FilePreviewDocx({
+  entry,
+  assetSrc,
+  onError,
+  onOpenExternal,
+}: {
+  entry: VaultEntry
+  assetSrc: string
+  onError: () => void
+  onOpenExternal: () => void
+}) {
+  const [rawHtml, setRawHtml] = useState<string | null>(null)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const containerRef = useSanitizedHtmlFragment<HTMLElement>(rawHtml)
+
+  useEffect(() => {
+    let cancelled = false
+    setRawHtml(null)
+    setErrorMessage(null)
+
+    void (async () => {
+      try {
+        const buffer = await fetchArrayBuffer(assetSrc)
+        const mammothModule = await import('mammoth/mammoth.browser')
+        const mammoth = (mammothModule as typeof mammothModule & { default?: typeof mammothModule }).default ?? mammothModule
+        const result = await mammoth.convertToHtml({ arrayBuffer: buffer })
+        if (cancelled) return
+        setRawHtml(result.value)
+      } catch (error) {
+        if (cancelled) return
+        console.warn('docx preview failed', error)
+        setErrorMessage(error instanceof Error ? error.message : 'Unknown error')
+        onError()
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [assetSrc, onError])
+
+  if (errorMessage) {
+    const fallback = fallbackContentForPreviewKind('docx')
+    return (
+      <FilePreviewFallback
+        icon={fallback.icon}
+        title={fallback.title}
+        description={fallback.description}
+        onOpenExternal={onOpenExternal}
+      />
+    )
+  }
+
+  if (rawHtml === null) {
+    return <FilePreviewLoading label="Rendering Word document…" />
+  }
+
+  return (
+    <article
+      ref={containerRef}
+      className="docx-preview prose prose-sm max-w-none px-8 py-6 dark:prose-invert"
+      data-testid="docx-file-preview"
+      aria-label={`${entry.title} document content`}
+    />
+  )
+}
+
+function FilePreviewXlsx({
+  entry,
+  assetSrc,
+  onError,
+  onOpenExternal,
+}: {
+  entry: VaultEntry
+  assetSrc: string
+  onError: () => void
+  onOpenExternal: () => void
+}) {
+  const [sheets, setSheets] = useState<{ name: string; html: string }[] | null>(null)
+  const [activeSheet, setActiveSheet] = useState(0)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const currentHtml = sheets ? sheets[activeSheet]?.html ?? sheets[0]?.html ?? '' : null
+  const tableRef = useSanitizedHtmlFragment<HTMLDivElement>(currentHtml)
+
+  useEffect(() => {
+    let cancelled = false
+    setSheets(null)
+    setActiveSheet(0)
+    setErrorMessage(null)
+
+    void (async () => {
+      try {
+        const buffer = await fetchArrayBuffer(assetSrc)
+        const XLSX = await import('xlsx')
+        const workbook = XLSX.read(buffer, { type: 'array' })
+        const rendered = workbook.SheetNames.map((name) => {
+          const worksheet = workbook.Sheets[name]
+          const html = XLSX.utils.sheet_to_html(worksheet, { editable: false })
+          return { name, html }
+        })
+        if (cancelled) return
+        setSheets(rendered)
+      } catch (error) {
+        if (cancelled) return
+        console.warn('xlsx preview failed', error)
+        setErrorMessage(error instanceof Error ? error.message : 'Unknown error')
+        onError()
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [assetSrc, onError])
+
+  if (errorMessage) {
+    const fallback = fallbackContentForPreviewKind('xlsx')
+    return (
+      <FilePreviewFallback
+        icon={fallback.icon}
+        title={fallback.title}
+        description={fallback.description}
+        onOpenExternal={onOpenExternal}
+      />
+    )
+  }
+
+  if (sheets === null) {
+    return <FilePreviewLoading label="Rendering spreadsheet…" />
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col" data-testid="xlsx-file-preview" aria-label={`${entry.title} spreadsheet content`}>
+      {sheets.length > 1 && (
+        <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border bg-muted/30 px-2 py-1">
+          {sheets.map((sheet, index) => (
+            <button
+              key={sheet.name}
+              type="button"
+              onClick={() => setActiveSheet(index)}
+              className={`whitespace-nowrap rounded-md px-2.5 py-1 text-[12px] transition-colors ${
+                index === activeSheet ? 'bg-background font-semibold text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {sheet.name}
+            </button>
+          ))}
+        </div>
+      )}
+      <div
+        ref={tableRef}
+        className="xlsx-preview min-h-0 flex-1 overflow-auto px-4 py-3 text-[12px] [&_table]:border-collapse [&_table]:w-auto [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:px-2 [&_th]:py-1 [&_th]:font-semibold"
+      />
+    </div>
+  )
+}
+
 function FilePreviewBody({
   entry,
   previewKind,
@@ -254,6 +463,8 @@ function FilePreviewBody({
   onImageError,
   onAudioError,
   onVideoError,
+  onDocxError,
+  onXlsxError,
   onOpenExternal,
 }: {
   entry: VaultEntry
@@ -263,6 +474,8 @@ function FilePreviewBody({
   onImageError: () => void
   onAudioError: () => void
   onVideoError: () => void
+  onDocxError: () => void
+  onXlsxError: () => void
   onOpenExternal: () => void
 }) {
   if (shouldRenderImagePreview(previewKind === 'image', assetSrc, imageFailed)) {
@@ -279,6 +492,14 @@ function FilePreviewBody({
 
   if (previewKind === 'video' && assetSrc !== null) {
     return <FilePreviewMedia entry={entry} mediaKind="video" mediaSrc={assetSrc} onMediaError={onVideoError} />
+  }
+
+  if (previewKind === 'docx' && assetSrc !== null) {
+    return <FilePreviewDocx entry={entry} assetSrc={assetSrc} onError={onDocxError} onOpenExternal={onOpenExternal} />
+  }
+
+  if (previewKind === 'xlsx' && assetSrc !== null) {
+    return <FilePreviewXlsx entry={entry} assetSrc={assetSrc} onError={onXlsxError} onOpenExternal={onOpenExternal} />
   }
 
   const fallback = fallbackContentForPreviewKind(previewKind)
@@ -309,6 +530,12 @@ function useFilePreviewFailureState(entryPath: string) {
     setFailedMediaPath(entryPath)
     trackFilePreviewFailed('video')
   }, [entryPath])
+  const handleDocxError = useCallback(() => {
+    trackFilePreviewFailed('docx')
+  }, [])
+  const handleXlsxError = useCallback(() => {
+    trackFilePreviewFailed('xlsx')
+  }, [])
 
   return {
     imageFailed: failedImagePath === entryPath,
@@ -316,6 +543,8 @@ function useFilePreviewFailureState(entryPath: string) {
     handleImageError,
     handleAudioError,
     handleVideoError,
+    handleDocxError,
+    handleXlsxError,
   }
 }
 
@@ -415,6 +644,8 @@ export function FilePreview({
           onImageError={failures.handleImageError}
           onAudioError={failures.handleAudioError}
           onVideoError={failures.handleVideoError}
+          onDocxError={failures.handleDocxError}
+          onXlsxError={failures.handleXlsxError}
           onOpenExternal={actions.handleOpenExternal}
         />
       </div>
